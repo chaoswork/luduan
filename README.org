@@ -1,0 +1,4 @@
+
+
+* ChangeLog
+  - <2023-07-18 二 12:02> 使用Huggingface训练框架和nanoGPT，baichuan tokenizer初始化了第一个版本。

@@ -22,7 +22,7 @@ from models.configuration_luduan import LuduanConfig
 
 @dataclass
 class ModelArguments:
-    model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
+    model_name_or_path: Optional[str] = field(default="gpt2")
     block_size: Optional[int] = field(default=1024)
 
 

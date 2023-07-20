@@ -5,8 +5,8 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
 
-class LuduanConfig(PretrainedConfig):
-    model_type = "luduan"
+class NanoGPT2Config(PretrainedConfig):
+    model_type = "NanoGPT2"
     keys_to_ignore_at_inference = ["past_key_values"]
 
     def __init__(

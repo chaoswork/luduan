@@ -4,7 +4,7 @@
 """
 Author:	Huang Chao (huangchao.cpp@gmail.com)
 Date: Mon Jul 17 11:34:18 2023
-Brief: Pytorch Luduan model
+Brief: Pytorch Nano GPT2 model
 """
 
 
@@ -20,7 +20,7 @@ from torch.nn import functional as F
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
-from .configuration_luduan import LuduanConfig
+from .configuration_nanogpt2 import NanoGPT2Config
 
 
 class LayerNorm(nn.Module):
@@ -127,7 +127,7 @@ class Block(nn.Module):
 
 class PreTrainedModel(PreTrainedModel):
     # 确保自动加载的时候能够找到对应的Config
-    config_class = LuduanConfig
+    config_class = NanoGPT2Config
 
 
 class Model(PreTrainedModel):
@@ -225,13 +225,13 @@ class Model(PreTrainedModel):
 
 
 
-class LuduanForCausalLM(PreTrainedModel):
+class NanoGPT2ForCausalLM(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         # save的时候保存auto_map字段，用于使用Auto来加载
         self.config.auto_map = {
-            "AutoConfig": "configuration_luduan.LuduanConfig",
-            "AutoModelForCausalLM": "modeling_luduan.LuduanForCausalLM"
+            "AutoConfig": "configuration_nanogpt2.NanoGPT2Config",
+            "AutoModelForCausalLM": "modeling_nanogpt2.NanoGPT2ForCausalLM"
         }
         self.model = Model(config)
 

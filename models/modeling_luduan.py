@@ -4,7 +4,7 @@
 """
 Author:	Huang Chao (huangchao.cpp@gmail.com)
 Date: Mon Jul 17 11:34:18 2023
-Brief: Pytorch Luduan model
+Brief: Pytorch Luduan model, Same arch of Llama
 """
 
 
@@ -19,20 +19,80 @@ from torch.nn import functional as F
 
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.activations import ACT2FN
 
 from .configuration_luduan import LuduanConfig
 
 
-class LayerNorm(nn.Module):
-    """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
+class RMSNorm(nn.Module):
+    """ RMSNorm is equivalent to T5LayerNorm"""
 
-    def __init__(self, ndim, bias):
+    def __init__(self, ndim, eps=1e-6):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(ndim))
-        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+        self.variance_epsilon = eps
 
-    def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(hidden_states.dtype)
+
+
+class RotaryEmbedding(torch.nn.Module):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
+        super().__init__()
+
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
+        self.register_buffer("inv_freq", inv_freq)
+
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
+
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos()[None, None, :, :].to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin()[None, None, :, :].to(dtype), persistent=False)
+
+    def forward(self, x, seq_len=None):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+        return (
+            self.cos_cached[:, :, :seq_len, ...].to(dtype=x.dtype),
+            self.sin_cached[:, :, :seq_len, ...].to(dtype=x.dtype),
+        )
+
+
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
+    # The first two dimensions of cos and sin are always 1, so we can `squeeze` them.
+    cos = cos.squeeze(1).squeeze(0)  # [seq_len, dim]
+    sin = sin.squeeze(1).squeeze(0)  # [seq_len, dim]
+    cos = cos[position_ids].unsqueeze(1)  # [bs, 1, seq_len, dim]
+    sin = sin[position_ids].unsqueeze(1)  # [bs, 1, seq_len, dim]
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
 
 class CausalSelfAttention(nn.Module):
 
@@ -40,18 +100,23 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.q_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.k_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.v_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.o_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        self.head_dim = self.n_embd // self.n_head
         self.dropout = config.dropout
+        self.rotary_emb = RotaryEmbedding(self.head_dim, config.block_size)
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        if not self.flash:
+#        if not self.flash:
+        if not False:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
@@ -61,56 +126,62 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        #q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        cos, sin = self.rotary_emb(v, seq_len=k.shape[-2])
+        position_ids = torch.arange(0, T)
+        q, k = apply_rotary_pos_emb(q, k, cos, sin, None) #position_ids)
+
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
+#        if self.flash:
+        if False:
             # efficient attention using Flash Attention CUDA kernels
+            # TODO: 需要自己实现attn_mask后才能用这个函数
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            # llama mask_fill用的是dtype的最小值。
+            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, torch.finfo(x.dtype).min)
             att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         # output projection
-        y = self.resid_dropout(self.c_proj(y))
+        y = self.o_proj(y)
         return y
 
 class MLP(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-        self.dropout = nn.Dropout(config.dropout)
+        self.gate_proj = nn.Linear(config.n_embd, config.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(config.n_embd, config.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(config.intermediate_size, config.n_embd, bias=False)
+        self.act_fn    = ACT2FN[config.hidden_act]
+
 
     def forward(self, x):
-        x = self.c_fc(x)
-        x = self.gelu(x)
-        x = self.c_proj(x)
-        x = self.dropout(x)
-        return x
+        x_gate = self.act_fn(self.gate_proj(x))
+        x_up = self.up_proj(x)
+        return self.down_proj(x_gate * x_up)
 
 class Block(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = CausalSelfAttention(config)
-        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.input_layernorm = RMSNorm(config.n_embd, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.n_embd, eps=config.rms_norm_eps)
+        self.self_attn = CausalSelfAttention(config)
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
-        x = x + self.mlp(self.ln_2(x))
+        x = x + self.self_attn(self.input_layernorm(x))
+        x = x + self.mlp(self.post_attention_layernorm(x))
         return x
 
 # @dataclass
@@ -138,13 +209,10 @@ class Model(PreTrainedModel):
         assert config.block_size is not None
         # self.config = config
 
-        self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
-            drop = nn.Dropout(config.dropout),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = LayerNorm(config.n_embd, bias=config.bias),
-        ))
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.n_embd)
+        self.layers = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
+        self.norm = RMSNorm(config.n_embd, eps=config.rms_norm_eps)
+        
         # self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
@@ -170,8 +238,6 @@ class Model(PreTrainedModel):
         params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
-            n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
     def _init_weights(self, module):
@@ -199,15 +265,16 @@ class Model(PreTrainedModel):
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        x = self.embed_tokens(idx) # token embeddings of shape (b, t, n_embd)
+
+        # no drop
+        # x = self.transformer.drop(tok_emb + pos_emb)
         all_hidden_states = () if output_hidden_states else None
-        for block in self.transformer.h:
+        for block in self.layers:
             x = block(x)
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (x,)
-        x = self.transformer.ln_f(x)
+        x = self.norm(x)
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (x,)
 
@@ -334,7 +401,7 @@ class LuduanForCausalLM(PreTrainedModel):
         # but want to use a smaller block size for some smaller, simpler model
         assert block_size <= self.config.block_size
         self.config.block_size = block_size
-        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
+
         for block in self.transformer.h:
             if hasattr(block.attn, 'bias'):
                 block.attn.bias = block.attn.bias[:,:,:block_size,:block_size]

@@ -11,14 +11,15 @@ class LuduanConfig(PretrainedConfig):
 
     def __init__(
             self,
-            # vocab_size=64000,
-            vocab_size=50257,
-            n_embd=768,
-            n_layer=12,
-            n_head=12,
-            block_size=1024,
+            vocab_size=32000,
+            n_embd=4096,
+            intermediate_size=11008,
+            n_layer=32,
+            n_head=32,
+            block_size=2048,
             dropout=0.0,
-            bias=True,
+            hidden_act="silu",
+            rms_norm_eps=1e-6,
             pad_token_id=0,
             bos_token_id=1,
             eos_token_id=2,
@@ -28,10 +29,12 @@ class LuduanConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.block_size = block_size
         self.n_embd = n_embd
+        self.intermediate_size = intermediate_size
+        self.rms_norm_eps = rms_norm_eps
         self.n_layer = n_layer
         self.n_head = n_head
         self.dropout = dropout
-        self.bias = bias
+        self.hidden_act = hidden_act
 #        self.use_cache = use_cache
         super().__init__(
             pad_token_id=pad_token_id,

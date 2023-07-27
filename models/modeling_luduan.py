@@ -115,8 +115,8 @@ class CausalSelfAttention(nn.Module):
         self.rotary_emb = RotaryEmbedding(self.head_dim, config.block_size)
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-#        if not self.flash:
-        if not False:
+        if not self.flash:
+##        if not False:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
@@ -134,11 +134,13 @@ class CausalSelfAttention(nn.Module):
 
         cos, sin = self.rotary_emb(v, seq_len=k.shape[-2])
         position_ids = torch.arange(0, T)
+        # TODO: generate的时候,prepare_inputs_for_generation自动解决了position_ids为空的情况。
+        # 训练的时候如何加进去？
         q, k = apply_rotary_pos_emb(q, k, cos, sin, None) #position_ids)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-#        if self.flash:
-        if False:
+        if self.flash:
+#        if False:
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:

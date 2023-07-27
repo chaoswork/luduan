@@ -140,7 +140,6 @@ class CausalSelfAttention(nn.Module):
 #        if self.flash:
         if False:
             # efficient attention using Flash Attention CUDA kernels
-            # TODO: 需要自己实现attn_mask后才能用这个函数
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             # manual implementation of attention
@@ -184,16 +183,6 @@ class Block(nn.Module):
         x = x + self.mlp(self.post_attention_layernorm(x))
         return x
 
-# @dataclass
-# class GPTConfig:
-#     block_size: int = 1024
-#     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-#     n_layer: int = 12
-#     n_head: int = 12
-#     n_embd: int = 768
-#     dropout: float = 0.0
-#     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-# 
 
 
 class PreTrainedModel(PreTrainedModel):
@@ -378,22 +367,39 @@ class LuduanForCausalLM(PreTrainedModel):
         )
         return model_inputs
 
-    def load_weights_from_huggingface(self):
-        from transformers import GPT2LMHeadModel
-        gpt2_model = GPT2LMHeadModel.from_pretrained('gpt2')
-        for weight_name in gpt2_model.state_dict():
-            if weight_name.startswith('transformer'):
-                new_name = 'model.' + weight_name
-            else:
-                new_name = weight_name
-    
-            if weight_name.endswith('c_attn.weight') or weight_name.endswith('c_fc.weight') or weight_name.endswith('c_proj.weight'):
-                assert self.state_dict()[new_name].transpose(0, 1).shape == gpt2_model.state_dict()[weight_name].shape
-                self.state_dict()[new_name].copy_(gpt2_model.state_dict()[weight_name].transpose(0, 1)    )
-            else:
-                self.state_dict()[new_name].copy_(gpt2_model.state_dict()[weight_name]    )
+    def load_weights_from_baichuan(self):
+        """
+        由于baichuan的attention实现和llama略有不同，所以目前通过copy state_dict的方式实现。
+        pytorch的model是pickle格式的，虽然结构上通过很多ID来进行分割，但是如何只加载部分参数还没有
+        很方便的方法，只能修改torch的load函数。
+        baichuan的W_pack就相当于q_proj, k_proj, v_proj拼接起来。
+        后续可以尝试一下内部新增变量来实现？
+        """
 
-        
+        baichuan = AutoModelForCausalLM.from_pretrained('baichuan-inc/Baichuan-7B',trust_remote_code=True).to('cuda:0')
+
+        for weight_name in luduan.state_dict():
+
+            if weight_name not in baichuan.state_dict():
+                if weight_name.endswith('self_attn.bias'):
+                    continue
+                layer_no = weight_name.split('.')[2]
+                w_name = f'model.layers.{layer_no}.self_attn.W_pack.weight'
+                # print(baichuan.state_dict()[w_name].shape)
+                if 'q_proj' in weight_name:
+                    luduan.state_dict()[weight_name].copy_(baichuan.state_dict()[w_name][0:luduan.config.n_embd,:])
+                elif 'k_proj' in weight_name:
+                    luduan.state_dict()[weight_name].copy_(baichuan.state_dict()[w_name][luduan.config.n_embd:2*luduan.config.n_embd,:])
+                elif 'v_proj' in weight_name:
+                    luduan.state_dict()[weight_name].copy_(baichuan.state_dict()[w_name][2*luduan.config.n_embd:,:])
+
+                # print(weight_name)
+            else:
+                luduan.state_dict()[weight_name].copy_(baichuan.state_dict()[weight_name]    )
+        # 释放显存
+        baichuan = None
+        torch.cuda.empty_cache()
+
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
@@ -448,29 +454,3 @@ class LuduanForCausalLM(PreTrainedModel):
         mfu = flops_achieved / flops_promised
         return mfu
 
-    # @torch.no_grad()
-    # def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
-    #     """
-    #     Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
-    #     the sequence max_new_tokens times, feeding the predictions back into the model each time.
-    #     Most likely you'll want to make sure to be in model.eval() mode of operation for this.
-    #     """
-    #     for _ in range(max_new_tokens):
-    #         # if the sequence context is growing too long we must crop it at block_size
-    #         idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-    #         # forward the model to get the logits for the index in the sequence
-    #         logits = self(idx_cond).logits
-    #         # pluck the logits at the final step and scale by desired temperature
-    #         logits = logits[:, -1, :] / temperature
-    #         # optionally crop the logits to only the top k options
-    #         if top_k is not None:
-    #             v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-    #             logits[logits < v[:, [-1]]] = -float('Inf')
-    #         # apply softmax to convert logits to (normalized) probabilities
-    #         probs = F.softmax(logits, dim=-1)
-    #         # sample from the distribution
-    #         idx_next = torch.multinomial(probs, num_samples=1)
-    #         # append sampled index to the running sequence and continue
-    #         idx = torch.cat((idx, idx_next), dim=1)
-
-    #     return idx

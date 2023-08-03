@@ -100,9 +100,13 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.q_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
-        self.k_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
-        self.v_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        if self.is_baichuan_architecture:
+            self.W_pack = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
+        else:
+            self.q_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+            self.k_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+            self.v_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        
         # output projection
         self.o_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         # regularization
@@ -127,7 +131,13 @@ class CausalSelfAttention(nn.Module):
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         #q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        if self.is_baichuan_architecture:
+            q = torch.matmul(x, self.W_pack.weight[0:self.n_embd,:].T)
+            k = torch.matmul(x, self.W_pack.weight[self.n_embd:2 * self.n_embd,:].T)
+            v = torch.matmul(x, self.W_pack.weight[2 * self.n_embd:,:].T)
+        else:
+            q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)

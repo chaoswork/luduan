@@ -100,9 +100,14 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.q_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
-        self.k_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
-        self.v_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.is_baichuan_architecture = config.is_baichuan_architecture
+        if self.is_baichuan_architecture:
+            self.W_pack = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
+        else:
+            self.q_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+            self.k_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+            self.v_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        
         # output projection
         self.o_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         # regularization
@@ -127,7 +132,13 @@ class CausalSelfAttention(nn.Module):
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         #q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        if self.is_baichuan_architecture:
+            q = torch.matmul(x, self.W_pack.weight[0:self.n_embd,:].T)
+            k = torch.matmul(x, self.W_pack.weight[self.n_embd:2 * self.n_embd,:].T)
+            v = torch.matmul(x, self.W_pack.weight[2 * self.n_embd:,:].T)
+        else:
+            q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -371,11 +382,13 @@ class LuduanForCausalLM(PreTrainedModel):
 
     def load_weights_from_baichuan(self):
         """
-        由于baichuan的attention实现和llama略有不同，所以目前通过copy state_dict的方式实现。
+        已废弃，仅供学习使用
+        由于baichuan的attention实现和llama略有不同，所以目前通过copy state_dict的方式实现,这就导致
+        显存占用提升了一倍。
         pytorch的model是pickle格式的，虽然结构上通过很多ID来进行分割，但是如何只加载部分参数还没有
         很方便的方法，只能修改torch的load函数。
         baichuan的W_pack就相当于q_proj, k_proj, v_proj拼接起来。
-        后续可以尝试一下内部新增变量来实现？
+        通过Attention 引入is_baichuan_architecture完美解决了这个问题。
         """
 
         baichuan = AutoModelForCausalLM.from_pretrained('baichuan-inc/Baichuan-7B',trust_remote_code=True).to('cuda:0')

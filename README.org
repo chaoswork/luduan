@@ -4,6 +4,8 @@
 ** Llama
    #+begin_src python
    import torch
+   import sys
+   sys.path.append('/path/of/luduan')
    from models.configuration_luduan import LuduanConfig
    from models.modeling_luduan import LuduanForCausalLM
    from transformers import AutoModel, LlamaTokenizer, AutoModelForCausalLM
@@ -20,14 +22,16 @@
 ** Baichuan
    #+begin_src python
    from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
+   import sys
+   sys.path.append('/path/of/luduan')
    from models.configuration_luduan import LuduanConfig
    from models.modeling_luduan import LuduanForCausalLM
    tokenizer = AutoTokenizer.from_pretrained('baichuan-inc/Baichuan-7B', trust_remote_code=True)
-   baichuan = AutoModelForCausalLM.from_pretrained('baichuan-inc/Baichuan-7B',trust_remote_code=True).to('cuda:0')
-
-   luduan = LuduanForCausalLM(LuduanConfig(vocab_size=64000)).to('cuda:0')
-   luduan.load_weights_from_baichuan()
-
+   
+   luduan = LuduanForCausalLM.from_pretrained(
+       'baichuan-inc/Baichuan-7B',
+       config=LuduanConfig(vocab_size=64000, is_baichuan_architecture=True)).to('cuda:0')
+   
    text = "'登鹳雀楼->王之涣\n夜雨寄北->'"
    encoded_input = tokenizer(text, return_tensors='pt').to('cuda:0')
    pred = luduan.generate(**encoded_input, max_new_tokens=64,repetition_penalty=1.1)
@@ -36,6 +40,7 @@
 
 
 * ChangeLog
-  - <2023-07-25 二 11:18> 实现加载baihuan权重（不优雅）
+  - <2023-08-03 四 14:49> 采用is_baichuan_architecture来判断是否是baichuan架构，可以直接使用from_pretrained加载权重
+  - <2023-07-25 二 11:18> 实现加载baihuan权重, copy from state_dict（不优雅）
   - <2023-07-21 五 16:39> 实现from_pretrain llama
   - <2023-07-18 二 12:02> 使用Huggingface训练框架和nanoGPT，baichuan tokenizer初始化了第一个版本。

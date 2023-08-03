@@ -24,6 +24,7 @@ class LuduanConfig(PretrainedConfig):
             bos_token_id=1,
             eos_token_id=2,
             tie_word_embeddings=False,
+            is_baichuan_architecture=False,
             **kwargs,
         ):
         self.vocab_size = vocab_size
@@ -35,6 +36,7 @@ class LuduanConfig(PretrainedConfig):
         self.n_head = n_head
         self.dropout = dropout
         self.hidden_act = hidden_act
+        self.is_baichuan_architecture = is_baichuan_architecture
 #        self.use_cache = use_cache
         super().__init__(
             pad_token_id=pad_token_id,

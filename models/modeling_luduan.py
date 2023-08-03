@@ -86,8 +86,8 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
     # The first two dimensions of cos and sin are always 1, so we can `squeeze` them.
     cos = cos.squeeze(1).squeeze(0)  # [seq_len, dim]
     sin = sin.squeeze(1).squeeze(0)  # [seq_len, dim]
-    cos = cos[position_ids].unsqueeze(1)  # [bs, 1, seq_len, dim]
-    sin = sin[position_ids].unsqueeze(1)  # [bs, 1, seq_len, dim]
+    cos = cos[position_ids].unsqueeze(1)  # [1, 1, seq_len, dim]
+    sin = sin[position_ids].unsqueeze(1)  # [1, 1, seq_len, dim]
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
@@ -144,10 +144,9 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         cos, sin = self.rotary_emb(v, seq_len=k.shape[-2])
-        position_ids = torch.arange(0, T)
-        # TODO: generate的时候,prepare_inputs_for_generation自动解决了position_ids为空的情况。
-        # 训练的时候如何加进去？
-        q, k = apply_rotary_pos_emb(q, k, cos, sin, None) #position_ids)
+        # position_ids暂时没有座位参数传进来，后续可以改进。
+        position_ids = torch.arange(0, T).unsqueeze(0)
+        q, k = apply_rotary_pos_emb(q, k, cos, sin, position_ids)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:

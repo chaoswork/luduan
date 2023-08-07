@@ -19,22 +19,27 @@ from transformers import Trainer
 from models.modeling_luduan import LuduanForCausalLM
 from models.configuration_luduan import LuduanConfig
 
+from data import SimpleDataset
+
 
 @dataclass
 class ModelArguments:
-    model_name_or_path: Optional[str] = field(default="gpt2")
+    model_name_or_path: Optional[str] = field(default="baichuan-inc/Baichuan-7B")
     block_size: Optional[int] = field(default=1024)
 
 
 @dataclass
 class DataArguments:
     data_path: str = field(default=None, metadata={"help": "Path to the training data."})
+    data_type: str = field(default='txt', metadata={"help": "training data type."})
 
 
 
 def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, data_args, model_args) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
-    train_dataset = TextDataset(tokenizer=tokenizer, file_path=data_args.data_path, block_size=model_args.block_size)
+    # train_dataset = TextDataset(tokenizer=tokenizer, file_path=data_args.data_path, block_size=model_args.block_size)
+    train_dataset = SimpleDataset(file_path=data_args.data_path, file_type=data_args.data_type,
+                                  tokenizer=tokenizer, block_size=model_args.block_size)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
     return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
     
@@ -43,7 +48,15 @@ def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, transformers.TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    model = LuduanForCausalLM(LuduanConfig(block_size=model_args.block_size))
+    nano_luduan_config = LuduanConfig(
+        vocab_size=64000,
+        n_embd=768,
+        n_layer=12,
+        n_head=12,
+        block_size=1024,
+        intermediate_size=768 * 4)
+
+    model = LuduanForCausalLM(nano_luduan_config)
     tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
 
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, model_args=model_args)

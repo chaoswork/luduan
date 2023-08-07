@@ -20,6 +20,7 @@ class LuduanConfig(PretrainedConfig):
             dropout=0.0,
             hidden_act="silu",
             rms_norm_eps=1e-6,
+            initializer_range=0.02,
             pad_token_id=0,
             bos_token_id=1,
             eos_token_id=2,
@@ -37,6 +38,7 @@ class LuduanConfig(PretrainedConfig):
         self.dropout = dropout
         self.hidden_act = hidden_act
         self.is_baichuan_architecture = is_baichuan_architecture
+        self.initializer_range = initializer_range
 #        self.use_cache = use_cache
         super().__init__(
             pad_token_id=pad_token_id,

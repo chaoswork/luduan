@@ -201,6 +201,20 @@ class PreTrainedModel(PreTrainedModel):
     # 确保自动加载的时候能够找到对应的Config
     config_class = LuduanConfig
 
+    def _init_weights(self, module):
+        """
+        初始化权重最好放在这里，torch的老版本需要。
+        """
+        std = self.config.initializer_range
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+
 
 class Model(PreTrainedModel):
 
@@ -241,13 +255,6 @@ class Model(PreTrainedModel):
         n_params = sum(p.numel() for p in self.parameters())
         return n_params
 
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(
             self,

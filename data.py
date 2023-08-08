@@ -11,8 +11,10 @@ Brief:
 import os
 import torch
 import numpy as np
+from tqdm import tqdm
 from torch.utils.data import Dataset, IterableDataset
 from datasets import load_dataset # huggingface datasets
+import multiprocessing
 
 
 
@@ -136,23 +138,30 @@ class MMapDataset(IterableDataset):
                     remove_columns=['text'],
                     num_proc=num_proc
                 )
-                arrlen = np.sum(dataset['len'], dtype=np.uint64)
-                arr = np.memmap(mmap_file_name, dtype=self.mmap_dtype,
-                                mode='w+', shape=(arrlen, ))
-                
-                total_batches = 1024
-                
-                idx = 0
-                for batch_idx in tqdm(range(total_batches), desc=f'writing {mmap_file_name}'):
-                    # Batch together samples for faster write
-                    batch = dataset.shard(num_shards=total_batches, index=batch_idx, contiguous=True).with_format('numpy')
-                    arr_batch = np.concatenate(batch['ids'])
-                    # Write into mmap
-                    arr[idx : idx + len(arr_batch)] = arr_batch
-                    idx += len(arr_batch)
-                arr.flush()
+                # 多进程dump
+                total_batches = 128
 
-            self.arr = np.memmap(mmap_file_name, dtype=self.mmap_dtype, mode='r')
+                global memmap_dump
+                def memmap_dump(batch_idx):
+                    batch = dataset.shard(num_shards=total_batches, index=batch_idx, contiguous=True).with_format('numpy')
+                    arrlen = np.sum(batch['len'], dtype=np.uint64)
+                    arr = np.memmap(f"{mmap_file_name}.{batch_idx}", dtype=self.mmap_dtype,
+                                    mode='w+', shape=(arrlen, ))
+                    idx = 0
+                    arr_batch = np.concatenate(batch['ids'])
+                    assert arrlen == len(arr_batch)
+                    arr[idx : idx + len(arr_batch)] = arr_batch
+                    arr.flush()
+
+                pool = multiprocessing.Pool(num_proc)
+                pool.map(memmap_dump, range(total_batches))
+                dataset = None
+                    
+
+            self.arr = np.array([], dtype=self.mmap_dtype)
+            for i in range(total_batches):
+                arr = np.memmap(f"{mmap_file_name}.{i}", dtype=self.mmap_dtype, mode='r')
+                self.arr = np.concatenate([self.arr, arr])
             
         else:
             raise NotImplementedError
@@ -162,4 +171,4 @@ class MMapDataset(IterableDataset):
 
     def __iter__(self):
         idx = torch.randint(len(self.arr) - self.block_size, (1,))
-        yield torch.tensor(self.arr[idx:idx + self.block_size]) #, dtype=torch.int64)
+        yield torch.from_numpy((self.arr[idx:idx + self.block_size]).astype(np.int64))

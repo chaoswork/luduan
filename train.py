@@ -43,7 +43,7 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
     #                               tokenizer=tokenizer, block_size=model_args.block_size)
     train_dataset = MMapDataset(file_path=data_args.data_path, file_type=data_args.data_type,
                                 tokenizer=tokenizer, block_size=model_args.block_size,
-                                mmap_file_name=data_args.mmap_file_path,
+                                mmap_file_name=data_args.mmap_file_path, force_mmap=True,
                                 num_proc=40)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
     return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)

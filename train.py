@@ -43,9 +43,21 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
     #                               tokenizer=tokenizer, block_size=model_args.block_size)
     train_dataset = MMapDataset(file_path=data_args.data_path, file_type=data_args.data_type,
                                 tokenizer=tokenizer, block_size=model_args.block_size,
-                                mmap_file_name=data_args.mmap_file_path, force_mmap=True,
+                                mmap_file_name=data_args.mmap_file_path, force_mmap=False,
                                 num_proc=40)
+    # 需要注意DataCollatorForLanguageModeling的input_ids和labels是完全一样的，如果使用它，则需要再gpt/llama的内部实现labels的位移
+    # https://discuss.huggingface.co/t/where-does-the-transformers-do-the-target-text-shifting-in-causal-lm/32408
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    ### Debug
+    # samples = []
+    # for i in range(5):
+    #     samples.append(next(train_dataset)[0])
+    # print(samples)
+    # out = data_collator(samples)
+    # for key in out:
+    #     print(f"{key} shape: {out[key].shape}")
+    #     print(f"{key}:", out[key])
+    # end debug
     return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
     
 

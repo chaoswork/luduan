@@ -342,7 +342,14 @@ class LuduanForCausalLM(PreTrainedModel):
         if labels is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-1)
+            # 这里默认给的labels没有shift
+            
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            # print(shift_logits.view(-1, shift_logits.size(-1)).shape)
+            # print(shift_labels.view(-1).shape)
+            
+            loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1), ignore_index=-1)
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim

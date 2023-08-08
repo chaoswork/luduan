@@ -130,7 +130,8 @@ class MMapDataset(IterableDataset):
                 out = {'ids': ids, 'len': len(ids)}
                 return out
 
-            if  not os.path.exists(mmap_file_name) or force_mmap:
+            total_batches = 128
+            if not os.path.exists(f"{mmap_file_name}.0") or force_mmap:
 
                 dataset = load_dataset(file_path)
                 dataset = dataset['train'].map(
@@ -139,7 +140,6 @@ class MMapDataset(IterableDataset):
                     num_proc=num_proc
                 )
                 # 多进程dump
-                total_batches = 128
 
                 global memmap_dump
                 def memmap_dump(batch_idx):
@@ -159,7 +159,8 @@ class MMapDataset(IterableDataset):
                     
 
             self.arr = np.array([], dtype=self.mmap_dtype)
-            for i in range(total_batches):
+            print('Loading Memmap Data...')
+            for i in tqdm(range(total_batches)):
                 arr = np.memmap(f"{mmap_file_name}.{i}", dtype=self.mmap_dtype, mode='r')
                 self.arr = np.concatenate([self.arr, arr])
             

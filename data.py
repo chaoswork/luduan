@@ -101,9 +101,11 @@ class MMapDataset(IterableDataset):
         """
         Parameters
         ----------
-        mmap_dtype : np.uint16
-           注意最大值要比vocab_size要大
+        batch_size: int
+           暂时放在这里实现，后续通过Trainer框架实现。
+        
         """
+        super(MMapDataset).__init__()
 
         self.block_size = block_size
         self.mmap_dtype = np.uint32
@@ -170,6 +172,18 @@ class MMapDataset(IterableDataset):
         print(f'Token Counts: {len(self.arr)}')
 
 
+
     def __iter__(self):
-        idx = torch.randint(len(self.arr) - self.block_size, (1,))
-        yield torch.from_numpy((self.arr[idx:idx + self.block_size]).astype(np.int64))
+        """
+        一个特殊的迭代器，每次随机返回一段。
+        """
+        while True:
+           idx = torch.randint(len(self.arr) - self.block_size, (1,))
+           yield torch.from_numpy((self.arr[idx:idx + self.block_size]).astype(np.int64))
+
+
+    # def __len__(self):
+    #     """
+    #     IterableDataset并不需要__len__, 但是Dataloader需要，所以这里还是实现了。
+    #     """
+    #     return len(self.arr) // self.block_size

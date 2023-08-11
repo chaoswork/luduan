@@ -243,7 +243,7 @@ class Model(PreTrainedModel):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # report number of parameters
-        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+        print("number of parameters: %.2fM" % (self.get_num_params(non_embedding=False)/1e6,))
 
     def get_num_params(self, non_embedding=True):
         """
@@ -253,7 +253,10 @@ class Model(PreTrainedModel):
         params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
-        return n_params
+        if non_embedding:
+            n_params -= self.embed_tokens.weight.numel()
+        return n_params    
+    
 
 
     def forward(
@@ -266,6 +269,8 @@ class Model(PreTrainedModel):
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
             return_dict: Optional[bool] = None):
+#         print('debug', input_ids.shape)
+
         idx = input_ids
         device = idx.device
         b, t = idx.size()
@@ -303,6 +308,7 @@ class Model(PreTrainedModel):
 class LuduanForCausalLM(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
+        self.config = config
         # save的时候保存auto_map字段，用于使用Auto来加载
         self.config.auto_map = {
             "AutoConfig": "configuration_luduan.LuduanConfig",
@@ -314,7 +320,8 @@ class LuduanForCausalLM(PreTrainedModel):
         # self.lm_head.weight = self.model.transformer.wte.weight
 
         # Initialize weights and apply final processing
-        self.post_init()    
+        self.post_init()
+        
 
     def forward(
             self,
@@ -361,6 +368,19 @@ class LuduanForCausalLM(PreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.model.embed_tokens.weight.numel()
+        return n_params    
+    
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs):
         """
@@ -466,11 +486,12 @@ class LuduanForCausalLM(PreTrainedModel):
 
         return optimizer
 
+
     def estimate_mfu(self, fwdbwd_per_iter, dt):
         """ estimate model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS """
         # first estimate the number of flops we do per iteration.
         # see PaLM paper Appendix B as ref: https://arxiv.org/abs/2204.02311
-        N = self.get_num_params()
+        N = sum(p.numel() for p in self.parameters())
         cfg = self.config
         L, H, Q, T = cfg.n_layer, cfg.n_head, cfg.n_embd//cfg.n_head, cfg.block_size
         flops_per_token = 6*N + 12*L*H*Q*T

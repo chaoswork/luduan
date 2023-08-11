@@ -9,6 +9,9 @@ Brief:
 
 import time
 import torch
+import deepspeed
+import deepspeed.comm as dist
+
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Sequence
 from torch.utils.data import DataLoader
@@ -36,7 +39,10 @@ class DataArguments:
     mmap_file_path: str = field(default='./train.bin', metadata={"help": "Path to the mmap data."})
     data_type: str = field(default='txt', metadata={"help": "training data type."})
 
-
+@dataclass
+class TrainingArguments(transformers.TrainingArguments):
+    training_framework: str = field(default="pytorch")
+    deepspeed_config: str = field(default=None)
 
 def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, data_args, model_args, training_args) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
@@ -94,7 +100,7 @@ class LuduanCallback(TrainerCallback):
             
 
 def train():
-    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, transformers.TrainingArguments))
+    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     print('--------- ModelArguments ---------')
@@ -113,18 +119,68 @@ def train():
         intermediate_size=768 * 4)
 
     model = LuduanForCausalLM(nano_luduan_config)
-    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
 
-    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, model_args=model_args, training_args=training_args)
-    trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args,
-                      callbacks=[LuduanCallback],
-                      **data_module)
-    result = trainer.train()
-
+    # try to use bettertransformer
+    # from optimum.bettertransformer import BetterTransformer
+    # model.config.model_type = 'llama'
+    # model = BetterTransformer.transform(model)
     
-    display_summary(result)
-    trainer.save_state()
-    trainer.save_model(output_dir=training_args.output_dir)
+    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
+    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, model_args=model_args, training_args=training_args)
+
+    print('debug', training_args.training_framework)
+
+    if training_args.training_framework == 'pytorch':
+        trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args,
+                          callbacks=[LuduanCallback],
+                          **data_module)
+        result = trainer.train()
+        
+        display_summary(result)
+        trainer.save_state()
+        trainer.save_model(output_dir=training_args.output_dir)
+        
+    elif training_args.training_framework == 'deepspeed':
+        deepspeed.zero.Init(config_dict_or_path=training_args.deepspeed_config,
+                             enabled=True,
+                             mem_efficient_linear=False,
+                             mpu=None)
+        model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+        model_engine, _, _, _ = deepspeed.initialize(
+            args=training_args,
+            model=model,
+            optimizer=None,
+            model_parameters=model_parameters)
+
+        train_dataset = DataLoader(data_module['train_dataset'],
+                                   batch_size=training_args.per_device_train_batch_size)
+
+        model_engine.train()
+
+        step = 0
+        last_time = time.time()
+        while step < training_args.max_steps:
+            data = next(iter(train_dataset)).cuda()
+            
+  #           print(data)
+            loss = model_engine(data, labels=data).loss
+            model_engine.backward(loss)
+            model_engine.step()
+            step += 1
+            if step % training_args.logging_steps == 0:
+                cur_time = time.time()
+                time_used = cur_time - last_time
+                last_time = cur_time
+                mfu = kwargs['model'].estimate_mfu(
+                    training_args.logging_steps * training_args.per_device_train_batch_size,
+                    time_used)
+                print(f'{training_args.logging_steps} Steps Time Used: {time_used}s')
+                print(f'Estimate MFU:\t{100 * mfu}%')
+
+                
+                
+                
+
 
 
 if __name__ == "__main__":

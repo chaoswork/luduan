@@ -20,16 +20,19 @@ CUDA_VISIBLE_DEVICES=1 python train.py \
     --save_total_limit=3 \
     --mmap_file_path build/data/openwebtext-10k.bin \
     --report_to tensorboard \
-    --gradient_accumulation_steps 4
+    --training_framework deepspeed \
+    --deepspeed_config config/deepspeed.json
+    # --dataloader_num_workers 4
+    # --gradient_accumulation_steps 4
     # --save_steps 100 \
 
 exit 0
 # Single GPU Test
-CUDA_VISIBLE_DEVICES=1 python train.py \
+CUDA_VISIBLE_DEVICES=0 python train.py \
     --data_path openwebtext \
     --data_type huggingface \
     --output_dir outputs \
-    --per_device_train_batch_size 8192 \
+    --per_device_train_batch_size 32 \
     --bf16 True \
     --max_steps 600000 \
     --save_steps 10000 \

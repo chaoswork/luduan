@@ -1,0 +1,13 @@
+python train.py \
+    --model_name_or_path uer/gpt2-chinese-cluecorpussmall \
+    --data_path /data/git-local/chaoslib/projects/genneral-ner/data/gner_train_test_split_0826/raw/train.jsonl \
+    --val_data_path /data/git-local/chaoslib/projects/genneral-ner/data/gner_train_test_split_0826/raw/test.jsonl \
+    --output_dir outputs \
+    --per_device_train_batch_size 16 \
+    --bf16 True \
+    --num_train_epochs 3 \
+    --save_steps 10000 \
+    --learning_rate 6e-4 \
+    --weight_decay 1e-1 \
+    --save_total_limit=3 \
+    --report_to tensorboard

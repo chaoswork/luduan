@@ -139,6 +139,22 @@ def train():
         display_summary(result)
         trainer.save_state()
         trainer.save_model(output_dir=training_args.output_dir)
+    elif training_args.training_framework == 'deepspeed-integration':
+        import json
+        training_args.deepspeed = json.load(open(training_args.deepspeed_config))
+        print(training_args.deepspeed)
+        # training_args.deepspeed = training_args.deepspeed_config
+        
+        trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args,
+                          callbacks=[LuduanCallback],
+                          **data_module)
+        result = trainer.train()
+        
+        display_summary(result)
+        trainer.save_state()
+        trainer.save_metrics("train", result.metrics, combine=True)
+        trainer.save_model(output_dir=training_args.output_dir)
+        
         
     elif training_args.training_framework == 'deepspeed':
         deepspeed.zero.Init(config_dict_or_path=training_args.deepspeed_config,
@@ -171,11 +187,14 @@ def train():
                 cur_time = time.time()
                 time_used = cur_time - last_time
                 last_time = cur_time
-                mfu = kwargs['model'].estimate_mfu(
+                mfu = model.estimate_mfu(
                     training_args.logging_steps * training_args.per_device_train_batch_size,
                     time_used)
                 print(f'{training_args.logging_steps} Steps Time Used: {time_used}s')
                 print(f'Estimate MFU:\t{100 * mfu}%')
+
+    else:
+        print(f"{training_args.training_framework} is not support now. Please choose the right training framework")
 
                 
                 

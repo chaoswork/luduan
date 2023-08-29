@@ -24,6 +24,7 @@ from transformers import TextDataset, DataCollatorForLanguageModeling
 from transformers import Trainer, TrainerCallback
 
 from data import GlobalPointerDataset
+from data import GlobalPointerIterableDataset
 from utils.train_summary import *
 from ner.layers import GlobalPointer
 
@@ -47,11 +48,13 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
     # train_dataset = TextDataset(tokenizer=tokenizer, file_path=data_args.data_path, block_size=model_args.block_size)
     # train_dataset = SimpleIterDataset(file_path=data_args.data_path, file_type=data_args.data_type,
     #                               tokenizer=tokenizer, block_size=model_args.block_size)
+    # train_dataset = GlobalPointerIterableDataset(
     train_dataset = GlobalPointerDataset(
         file_path=data_args.data_path,
         tokenizer=tokenizer,
         max_length=model_args.block_size)
 
+    # eval_dataset = GlobalPointerIterableDataset(
     eval_dataset = GlobalPointerDataset(
         file_path=data_args.val_data_path,
         tokenizer=tokenizer,

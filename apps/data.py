@@ -58,6 +58,7 @@ class GlobalPointerDataset(Dataset):
             max_length=self.max_length,
             truncation=True,
             padding='max_length',
+            add_special_tokens=False,
         )
 
         # make labels
@@ -71,7 +72,7 @@ class GlobalPointerDataset(Dataset):
             
             entity = example['input'][label_info['start_offset']: label_info['end_offset']]
             # print('debug', entity, label_info['label'])
-            entity_ids = self.tokenizer(entity)['input_ids']
+            entity_ids = self.tokenizer(entity, add_special_tokens=False)['input_ids']
             for i in range(length - len(entity_ids)):
                 # print(type(input_ids), type(entity_ids))
                 # TODO 先用N^2方法实现，需要的话改为kmp

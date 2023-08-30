@@ -270,7 +270,7 @@ if __name__ == '__main__':
             valid_f1 = valid(model, valid_dataloader)
             if valid_f1 > max_f1:
                 max_f1 = valid_f1
-                if valid_f1 > config["f1_2_save"]:  # save the best model
+                if valid_f1 > 0.5:  # save the best model
                     model_state_num = len(glob.glob(training_args.output_dir + "/model_state_dict_*.pt"))
                     torch.save(model.state_dict(),
                                os.path.join(training_args.output_dir, "model_state_dict_{}.pt".format(model_state_num)))
